@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Suivi de convoi</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{
+    --bg:#14161a; --panel:#1d2026; --panel-2:#252932; --line:#31353f;
+    --text:#edeff2; --text-dim:#9aa1ac; --amber:#f5b301; --teal:#5ec8d8;
+    --green:#4cc38a; --red:#ef5b5b;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--text);font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column;overflow:hidden}
+  header{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--line);flex-shrink:0;flex-wrap:wrap}
+  header h1{font-size:16px;margin:0;display:flex;align-items:center;gap:8px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--amber);display:inline-block}
+  .code{font-family:ui-monospace,Menlo,Consolas,monospace;background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:2px 8px;font-size:13px;letter-spacing:.5px}
+  .grow{flex:1}
+  .status{font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:6px}
+  .status i{width:8px;height:8px;border-radius:50%;background:var(--text-dim);display:inline-block}
+  .status.online i{background:var(--green)}
+  .status.connecting i{background:var(--amber)}
+  button{font:inherit;background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:9px;padding:6px 11px;cursor:pointer}
+  button:hover{border-color:var(--amber)}
+  main{flex:1;display:flex;min-height:0}
+  #map{flex:1;min-width:0;background:#0e1013}
+  aside{width:320px;max-width:42vw;background:var(--panel);border-left:1px solid var(--line);overflow-y:auto;flex-shrink:0}
+  .veh{display:flex;gap:10px;padding:11px 12px;border-bottom:1px solid var(--line);cursor:pointer;align-items:flex-start}
+  .veh:hover{background:var(--panel-2)}
+  .veh.stale{opacity:.5}
+  .badge{width:30px;height:30px;border-radius:50%;flex-shrink:0;display:grid;place-items:center;font-weight:700;color:#14161a;font-size:13px}
+  .veh b{display:block;font-size:14px}
+  .veh small{display:block;color:var(--text-dim);font-size:12px}
+  .veh .toll{color:var(--amber)}
+  .empty{padding:22px 16px;color:var(--text-dim);text-align:center}
+  /* écran d'entrée du code */
+  #gate{position:fixed;inset:0;background:var(--bg);display:none;place-items:center;z-index:2000;padding:20px}
+  #gate.show{display:grid}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px;width:min(380px,100%)}
+  .card h2{margin:0 0 6px}
+  .card p{color:var(--text-dim);margin:0 0 14px}
+  .card input{width:100%;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel-2);color:var(--text);font:inherit;font-size:16px;letter-spacing:1px;text-transform:uppercase;margin-bottom:12px}
+  .card button.primary{width:100%;background:var(--amber);color:#14161a;border:0;font-weight:700;padding:11px}
+  /* marqueurs */
+  .vmark{position:relative}
+  .vmark .bub{width:34px;height:34px;border-radius:50%;border:3px solid #fff;display:grid;place-items:center;font-weight:800;color:#14161a;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.5)}
+  .vmark .arrow{position:absolute;left:50%;top:50%;width:0;height:0;margin:-24px 0 0 -6px;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:11px solid var(--c);transform-origin:6px 24px}
+  .vmark .lbl{position:absolute;top:38px;left:50%;transform:translateX(-50%);white-space:nowrap;background:rgba(20,22,26,.88);color:#fff;border-radius:6px;padding:1px 6px;font-size:11px;font-weight:600}
+  .vmark.stale .bub{filter:grayscale(1);opacity:.6}
+  @media (max-width:720px){
+    main{flex-direction:column}
+    aside{width:100%;max-width:none;height:38%;border-left:0;border-top:1px solid var(--line)}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="dot"></span>Suivi de convoi</h1>
+  <span class="code" id="code-label">—</span>
+  <span class="grow"></span>
+  <span class="status" id="status"><i></i><span id="status-text">Connexion…</span></span>
+  <button id="fit-btn" type="button">🎯 Tout voir</button>
+  <button id="change-btn" type="button">Changer de convoi</button>
+</header>
+<main>
+  <div id="map"></div>
+  <aside id="list"><div class="empty">En attente des véhicules…<br><small>Les positions apparaissent dès qu'un conducteur démarre son trajet avec le partage activé.</small></div></aside>
+</main>
+
+<div id="gate">
+  <div class="card">
+    <h2>👥 Suivre un convoi</h2>
+    <p>Entre le code du convoi (ou ouvre directement le lien reçu).</p>
+    <input id="gate-input" type="text" placeholder="CODE DU CONVOI" maxlength="16" autocomplete="off" autocapitalize="characters">
+    <button class="primary" id="gate-go" type="button">Ouvrir la carte</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* MiniMQTT — mini client MQTT 3.1.1 sur WebSocket (QoS 0, retain, wildcards).
+ * Sans dépendance : utilisé par l'app (publication) et la page de suivi (abonnement).
+ * Brokers publics gratuits essayés tour à tour si l'un ne répond pas. */
+(function(root){
+  'use strict';
+
+  const enc = new TextEncoder();
+  const dec = new TextDecoder();
+
+  function concat(arrs){
+    let n = 0;
+    arrs.forEach(a => { n += a.length; });
+    const out = new Uint8Array(n);
+    let o = 0;
+    arrs.forEach(a => { out.set(a, o); o += a.length; });
+    return out;
+  }
+  function str(s){
+    const b = enc.encode(s);
+    return concat([Uint8Array.of(b.length >> 8, b.length & 255), b]);
+  }
+  function varLen(n){
+    const a = [];
+    do {
+      let d = n % 128;
+      n = Math.floor(n / 128);
+      if (n > 0) d |= 128;
+      a.push(d);
+    } while (n > 0);
+    return Uint8Array.from(a);
+  }
+  function packet(first, body){
+    return concat([Uint8Array.of(first), varLen(body.length), body]);
+  }
+  function topicMatches(filter, topic){
+    const f = filter.split('/');
+    const t = topic.split('/');
+    for (let i = 0; i < f.length; i++){
+      if (f[i] === '#') return true;
+      if (i >= t.length) return false;
+      if (f[i] !== '+' && f[i] !== t[i]) return false;
+    }
+    return f.length === t.length;
+  }
+
+  const DEFAULT_URLS = [
+    'wss://broker.emqx.io:8084/mqtt',
+    'wss://broker.hivemq.com:8884/mqtt',
+    'wss://test.mosquitto.org:8081/'
+  ];
+
+  function MiniMQTT(opts){
+    opts = opts || {};
+    // Ordre de priorité : option du constructeur, puis window.CONVOY_BROKERS (relais perso), puis relais publics.
+    this.urls = (opts.urls && opts.urls.length) ? opts.urls : ((root.CONVOY_BROKERS && root.CONVOY_BROKERS.length) ? root.CONVOY_BROKERS : DEFAULT_URLS);
+    this.clientId = opts.clientId || ('ip-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4));
+    this.keepAlive = opts.keepAlive || 30;
+    this.urlIdx = 0;
+    this.ws = null;
+    this.connected = false;
+    this.ended = false;
+    this.attempt = 0;
+    this.buf = new Uint8Array(0);
+    this.subs = new Map();      // filtre -> [handlers]
+    this.pending = new Map();   // topic -> {payload, retain} (dernier message seulement)
+    this.statusFns = [];
+    this.pingTimer = null;
+    this.connTimer = null;
+    this.retryTimer = null;
+    this.packetId = 1;
+  }
+
+  MiniMQTT.prototype.onStatus = function(fn){ this.statusFns.push(fn); };
+  MiniMQTT.prototype._status = function(s, extra){
+    this.statusFns.forEach(fn => { try { fn(s, extra); } catch (e) { /* ignore */ } });
+  };
+
+  MiniMQTT.prototype.connect = function(){
+    if (this.ended || this.ws) return;
+    const url = this.urls[this.urlIdx % this.urls.length];
+    this._status('connecting', url);
+    let ws;
+    try { ws = new WebSocket(url, 'mqtt'); }
+    catch (e) { this._scheduleRetry(); return; }
+    ws.binaryType = 'arraybuffer';
+    this.ws = ws;
+    this.buf = new Uint8Array(0);
+
+    // Si le broker ne répond pas assez vite, on passe au suivant.
+    clearTimeout(this.connTimer);
+    this.connTimer = setTimeout(() => {
+      if (!this.connected && this.ws === ws){ try { ws.close(); } catch (e) { /* ignore */ } }
+    }, 9000);
+
+    ws.onopen = () => {
+      const body = concat([
+        str('MQTT'),
+        Uint8Array.of(4, 0x02, this.keepAlive >> 8, this.keepAlive & 255),
+        str(this.clientId)
+      ]);
+      this._send(packet(0x10, body));
+    };
+    ws.onmessage = (ev) => {
+      if (this.ws !== ws) return;
+      this._onData(new Uint8Array(ev.data));
+    };
+    // Selon l'environnement, un échec de connexion peut ne déclencher que
+    // "error" (sans "close") : on traite les deux de la même façon. Le
+    // garde-fou "this.ws !== ws" évite de traiter deux fois le même échec.
+    const onGone = () => {
+      if (this.ws !== ws) return;
+      this.ws = null;
+      const wasConnected = this.connected;
+      this.connected = false;
+      clearInterval(this.pingTimer);
+      clearTimeout(this.connTimer);
+      if (this.ended) return;
+      if (!wasConnected) this.urlIdx++; // ce broker ne marche pas : on essaie le suivant
+      this._status('offline');
+      this._scheduleRetry();
+    };
+    ws.onerror = onGone;
+    ws.onclose = onGone;
+  };
+
+  MiniMQTT.prototype._scheduleRetry = function(){
+    if (this.ended) return;
+    clearTimeout(this.retryTimer);
+    const delay = Math.min(1000 * Math.pow(2, this.attempt++), 15000);
+    this.retryTimer = setTimeout(() => this.connect(), delay);
+  };
+
+  MiniMQTT.prototype._send = function(bytes){
+    if (this.ws && this.ws.readyState === 1){
+      try { this.ws.send(bytes); return true; } catch (e) { return false; }
+    }
+    return false;
+  };
+
+  MiniMQTT.prototype._onData = function(chunk){
+    this.buf = concat([this.buf, chunk]);
+    for (;;){
+      if (this.buf.length < 2) return;
+      let mult = 1, len = 0, i = 1, b, count = 0;
+      do {
+        if (i >= this.buf.length) return;      // en-tête incomplet
+        b = this.buf[i++];
+        len += (b & 127) * mult;
+        mult *= 128;
+        if (++count > 4){ try { this.ws.close(); } catch (e) { /* ignore */ } return; }
+      } while (b & 128);
+      if (this.buf.length < i + len) return;   // paquet incomplet
+      const type = this.buf[0] >> 4;
+      const flags = this.buf[0] & 15;
+      const body = this.buf.slice(i, i + len);
+      this.buf = this.buf.slice(i + len);
+      this._handle(type, flags, body);
+    }
+  };
+
+  MiniMQTT.prototype._handle = function(type, flags, body){
+    if (type === 2){ // CONNACK
+      if (body[1] !== 0){ try { this.ws.close(); } catch (e) { /* ignore */ } return; }
+      this.connected = true;
+      this.attempt = 0;
+      clearTimeout(this.connTimer);
+      clearInterval(this.pingTimer);
+      this.pingTimer = setInterval(() => this._send(Uint8Array.of(0xC0, 0)), Math.max(5, this.keepAlive / 2) * 1000);
+      this.subs.forEach((_, filter) => this._sendSubscribe(filter));
+      this.pending.forEach((m, topic) => this._sendPublish(topic, m.payload, m.retain));
+      this.pending.clear();
+      this._status('online', this.urls[this.urlIdx % this.urls.length]);
+    } else if (type === 3){ // PUBLISH
+      const qos = (flags >> 1) & 3;
+      const tlen = (body[0] << 8) | body[1];
+      const topic = dec.decode(body.subarray(2, 2 + tlen));
+      let off = 2 + tlen;
+      if (qos > 0) off += 2;
+      const payload = body.subarray(off);
+      const retained = !!(flags & 1);
+      this.subs.forEach((handlers, filter) => {
+        if (topicMatches(filter, topic)){
+          handlers.forEach(h => { try { h(topic, payload, retained); } catch (e) { console.warn(e); } });
+        }
+      });
+    }
+    // SUBACK (9) et PINGRESP (13) : rien à faire.
+  };
+
+  MiniMQTT.prototype._sendSubscribe = function(filter){
+    const id = this.packetId++ & 0xFFFF || 1;
+    this._send(packet(0x82, concat([Uint8Array.of(id >> 8, id & 255), str(filter), Uint8Array.of(0)])));
+  };
+
+  MiniMQTT.prototype._sendPublish = function(topic, payload, retain){
+    const data = (typeof payload === 'string') ? enc.encode(payload) : payload;
+    return this._send(packet(0x30 | (retain ? 1 : 0), concat([str(topic), data])));
+  };
+
+  /** Abonnement (rejoué automatiquement après une reconnexion). */
+  MiniMQTT.prototype.subscribe = function(filter, handler){
+    if (!this.subs.has(filter)) this.subs.set(filter, []);
+    this.subs.get(filter).push(handler);
+    if (this.connected) this._sendSubscribe(filter);
+    this.connect();
+  };
+
+  /** Publication ; si hors-ligne, seul le dernier message par topic est gardé et envoyé à la reconnexion. */
+  MiniMQTT.prototype.publish = function(topic, payload, retain){
+    if (this.ended) return;
+    if (!(this.connected && this._sendPublish(topic, payload, retain))){
+      this.pending.set(topic, { payload: payload, retain: !!retain });
+    }
+    this.connect();
+  };
+
+  MiniMQTT.prototype.end = function(){
+    this.ended = true;
+    clearInterval(this.pingTimer);
+    clearTimeout(this.connTimer);
+    clearTimeout(this.retryTimer);
+    if (this.ws){
+      try { this._send(Uint8Array.of(0xE0, 0)); this.ws.close(); } catch (e) { /* ignore */ }
+    }
+    this.ws = null;
+    this.connected = false;
+  };
+
+  MiniMQTT.topicMatches = topicMatches;
+  root.MiniMQTT = MiniMQTT;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+(function(){
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const TOPIC_ROOT = 'itinpeages/v1/';
+  const STALE_MS = 2 * 60 * 1000;        // grisé au bout de 2 min sans nouvelle
+  const DROP_MS  = 30 * 60 * 1000;       // retiré au bout de 30 min
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function colorFor(id){
+    let h = 0; for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+    return 'hsl(' + (h % 360) + ',78%,62%)';
+  }
+  function ago(ts){
+    const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+    if (s < 5) return 'à l’instant';
+    if (s < 60) return 'il y a ' + s + ' s';
+    if (s < 3600) return 'il y a ' + Math.round(s / 60) + ' min';
+    return 'il y a ' + Math.round(s / 3600) + ' h';
+  }
+  function fmtEta(min){
+    if (min == null) return '';
+    const h = Math.floor(min / 60), m = Math.round(min % 60);
+    return h ? h + ' h ' + String(m).padStart(2, '0') : m + ' min';
+  }
+
+  // ---- Code du convoi : ?c=CODE, sinon saisie ----
+  function getCode(){
+    const p = new URLSearchParams(location.search).get('c');
+    return p ? p.trim().toUpperCase().replace(/[^A-Z0-9]/g, '') : '';
+  }
+  const code = getCode();
+  if (!code){
+    $('gate').classList.add('show');
+    const go = () => {
+      const v = $('gate-input').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (v.length >= 4) location.search = '?c=' + v;
+    };
+    $('gate-go').addEventListener('click', go);
+    $('gate-input').addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+    $('change-btn').style.display = 'none';
+    $('fit-btn').style.display = 'none';
+    return;
+  }
+  $('code-label').textContent = code;
+  document.title = 'Convoi ' + code;
+  $('change-btn').addEventListener('click', () => { location.search = ''; });
+
+  // ---- Carte ----
+  const map = L.map('map', { zoomControl: true }).setView([46.6, 2.4], 6);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '© OpenStreetMap'
+  }).addTo(map);
+
+  const vehicles = new Map(); // id -> {data, marker, route, routeLine}
+  let userMoved = false;
+  map.on('dragstart zoomstart', (e) => { if (e && e.originalEvent) userMoved = true; });
+
+  function markerHtml(v){
+    const c = colorFor(v.id);
+    const init = esc((v.data.name || '?').trim().slice(0, 2).toUpperCase());
+    const rot = (typeof v.data.heading === 'number' && !isNaN(v.data.heading)) ? v.data.heading : null;
+    return '<div class="vmark" style="--c:' + c + '">' +
+      (rot !== null ? '<div class="arrow" style="transform:rotate(' + rot + 'deg)"></div>' : '') +
+      '<div class="bub" style="background:' + c + '">' + init + '</div>' +
+      '<div class="lbl">' + esc(v.data.name || 'Véhicule') + '</div></div>';
+  }
+
+  function upsert(id, data){
+    let v = vehicles.get(id);
+    if (!v){ v = { id: id, data: data, marker: null, routeLine: null }; vehicles.set(id, v); }
+    v.data = data;
+    const ll = [data.lat, data.lon];
+    const icon = L.divIcon({ className: '', html: markerHtml(v), iconSize: [34, 34], iconAnchor: [17, 17] });
+    if (!v.marker){
+      v.marker = L.marker(ll, { icon: icon, zIndexOffset: 500 }).addTo(map);
+      v.marker.on('click', () => map.setView(v.marker.getLatLng(), Math.max(map.getZoom(), 12)));
+    } else {
+      v.marker.setLatLng(ll);
+      v.marker.setIcon(icon);
+    }
+  }
+  function setRoute(id, data){
+    let v = vehicles.get(id);
+    if (!v){ v = { id: id, data: null, marker: null, routeLine: null }; vehicles.set(id, v); }
+    if (v.routeLine){ map.removeLayer(v.routeLine); v.routeLine = null; }
+    if (data && Array.isArray(data.r) && data.r.length > 1){
+      v.routeLine = L.polyline(data.r, { color: colorFor(id), weight: 4, opacity: .55, dashArray: '2 8' }).addTo(map);
+    }
+  }
+  function remove(id){
+    const v = vehicles.get(id);
+    if (!v) return;
+    if (v.marker) map.removeLayer(v.marker);
+    if (v.routeLine) map.removeLayer(v.routeLine);
+    vehicles.delete(id);
+  }
+
+  function fitAll(){
+    const pts = [];
+    vehicles.forEach(v => { if (v.marker) pts.push(v.marker.getLatLng()); });
+    if (!pts.length) return;
+    if (pts.length === 1) map.setView(pts[0], 12);
+    else map.fitBounds(L.latLngBounds(pts).pad(0.25));
+  }
+  $('fit-btn').addEventListener('click', () => { userMoved = false; fitAll(); });
+
+  // ---- Liste ----
+  function renderList(){
+    const rows = [];
+    const now = Date.now();
+    vehicles.forEach(v => { if (v.data) rows.push(v); });
+    rows.sort((a, b) => (a.data.name || '').localeCompare(b.data.name || ''));
+    if (!rows.length){
+      $('list').innerHTML = '<div class="empty">En attente des véhicules…<br><small>Les positions apparaissent dès qu’un conducteur démarre son trajet avec le partage activé.</small></div>';
+      return;
+    }
+    $('list').innerHTML = rows.map(v => {
+      const d = v.data;
+      const stale = now - d.ts > STALE_MS;
+      const bits = [];
+      if (d.dest) bits.push('→ ' + esc(d.dest));
+      if (d.remKm != null) bits.push(Math.round(d.remKm) + ' km restants' + (d.etaMin != null ? ' · ' + fmtEta(d.etaMin) : ''));
+      if (typeof d.speed === 'number' && d.speed >= 0) bits.push(Math.round(d.speed * 3.6) + ' km/h');
+      return '<div class="veh' + (stale ? ' stale' : '') + '" data-id="' + esc(v.id) + '">' +
+        '<div class="badge" style="background:' + colorFor(v.id) + '">' + esc((d.name || '?').trim().slice(0, 2).toUpperCase()) + '</div>' +
+        '<div><b>' + esc(d.name || 'Véhicule') + '</b>' +
+        (bits.length ? '<small>' + bits.join(' · ') + '</small>' : '') +
+        (d.nextToll ? '<small class="toll">🚧 ' + esc(d.nextToll) + (d.nextTollKm != null ? ' · dans ' + Math.round(d.nextTollKm) + ' km' : '') + '</small>' : '') +
+        '<small>' + (stale ? '⚠️ ' : '') + ago(d.ts) + '</small></div></div>';
+    }).join('');
+    $('list').querySelectorAll('.veh').forEach(el => el.addEventListener('click', () => {
+      const v = vehicles.get(el.dataset.id);
+      if (v && v.marker){ userMoved = true; map.setView(v.marker.getLatLng(), Math.max(map.getZoom(), 12)); }
+    }));
+    document.querySelectorAll('.vmark').forEach(() => {}); // (placeholder pour futures animations)
+  }
+
+  function refreshStale(){
+    const now = Date.now();
+    vehicles.forEach((v, id) => {
+      if (!v.data) return;
+      const age = now - v.data.ts;
+      if (age > DROP_MS){ remove(id); return; }
+      if (v.marker){
+        const el = v.marker.getElement();
+        if (el){ const m = el.querySelector('.vmark'); if (m) m.classList.toggle('stale', age > STALE_MS); }
+      }
+    });
+    renderList();
+  }
+  setInterval(refreshStale, 5000);
+
+  // ---- Réception ----
+  const mq = new MiniMQTT({});
+  mq.onStatus((s) => {
+    const el = $('status');
+    el.className = 'status ' + (s === 'online' ? 'online' : s === 'connecting' ? 'connecting' : '');
+    $('status-text').textContent = s === 'online' ? 'En direct' : s === 'connecting' ? 'Connexion…' : 'Reconnexion…';
+  });
+  const base = TOPIC_ROOT + code + '/';
+  let firstFitDone = false;
+  mq.subscribe(base + '#', (topic, payload) => {
+    const rest = topic.slice(base.length).split('/');
+    const id = rest[0];
+    if (!id) return;
+    const text = payload.length ? new TextDecoder().decode(payload) : '';
+    if (rest.length === 1){                      // position
+      if (!text){ remove(id); renderList(); return; }
+      let d; try { d = JSON.parse(text); } catch (e) { return; }
+      if (typeof d.lat !== 'number' || typeof d.lon !== 'number') return;
+      if (!d.ts) d.ts = Date.now();
+      upsert(id, d);
+      renderList();
+      if (!userMoved){
+        if (!firstFitDone || vehicles.size > 1) { fitAll(); firstFitDone = true; }
+        else map.panTo([d.lat, d.lon]);
+      }
+    } else if (rest[1] === 'route'){             // tracé prévu
+      let d = null; if (text){ try { d = JSON.parse(text); } catch (e) { /* ignore */ } }
+      setRoute(id, d);
+    }
+  });
+})();
+</script>
+</body>
+</html>

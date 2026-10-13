@@ -1,0 +1,8 @@
+{
+  "appId": "com.itinerairepeages.app",
+  "appName": "Itineraire & Peages",
+  "webDir": "www",
+  "android": {
+    "useLegacyBridge": true
+  }
+}

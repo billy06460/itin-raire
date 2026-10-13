@@ -1,0 +1,19 @@
+{
+  "name": "itineraire-peages",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Calcul d'itineraire et detection des gares de peage sur le trajet.",
+  "scripts": {},
+  "dependencies": {
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/android": "^8.0.0",
+    "@capacitor-community/background-geolocation": "latest",
+    "@capacitor/share": "latest",
+    "@capacitor/clipboard": "latest",
+    "@capacitor/status-bar": "latest"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.0.0",
+    "@capacitor/assets": "^3.0.5"
+  }
+}
