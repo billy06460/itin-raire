@@ -347,7 +347,7 @@
     justify-content:space-between;
     gap:10px;
   }
-  #nav-quit, #nav-tolls-btn, #nav-alert-km{
+  #nav-quit, #nav-tolls-btn{
     background:rgba(29,32,38,.9);
     border:1px solid var(--line);
     color:var(--text);
@@ -860,7 +860,10 @@
           <h2>Gares de péage</h2>
           <span id="tolls-route-label"></span>
         </div>
-        <button id="tolls-close" type="button" class="tolls-close-btn" title="Revenir à la carte">✕</button>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button id="tolls-settings" type="button" class="settings-btn" title="Réglages">⚙️</button>
+          <button id="tolls-close" type="button" class="tolls-close-btn" title="Revenir à la carte">✕</button>
+        </div>
       </div>
       <div id="hidden-tolls-bar" class="hidden-tolls-bar" style="display:none;"></div>
       <div id="toll-list"></div>
@@ -873,7 +876,6 @@
   <div id="nav-topbar">
     <button id="nav-quit" type="button">✕ Quitter</button>
     <span id="nav-dest" class="nav-dest">—</span>
-    <button id="nav-alert-km" type="button">🔔 10 km</button>
     <button id="nav-tolls-btn" type="button">📋 Péages</button>
   </div>
   <div id="nav-bottombar">
@@ -1117,7 +1119,6 @@ const TOLLS_RAW = [{"r":"01A903905CD","n":"Beaupont","t":"Ech","l":"Echangeur","
     $('color-teal').value = appSettings.teal;
     $('alert-distance-slider').value = appSettings.alertKm;
     $('alert-distance-value').textContent = appSettings.alertKm + ' km';
-    $('nav-alert-km').textContent = '🔔 ' + appSettings.alertKm + ' km';
 
     // Un changement de distance d'alerte doit reprendre effet sur les
     // gares déjà "vues" pendant le trajet en cours (sans quoi une gare
@@ -1128,8 +1129,8 @@ const TOLLS_RAW = [{"r":"01A903905CD","n":"Beaupont","t":"Ech","l":"Echangeur","
     }
   }
 
-  // En navigation : le bouton 🔔 ouvre le même réglage (distance d'alerte) sans quitter le trajet.
-  $('nav-alert-km').addEventListener('click', () => { $('settings-overlay').classList.add('show'); });
+  // Liste des péages : la roue dentée ouvre les réglages (distance d'alerte, etc.).
+  $('tolls-settings').addEventListener('click', () => { $('settings-overlay').classList.add('show'); });
   $('open-settings').addEventListener('click', () => {
     $('settings-overlay').classList.add('show');
   });
@@ -1153,7 +1154,6 @@ const TOLLS_RAW = [{"r":"01A903905CD","n":"Beaupont","t":"Ech","l":"Echangeur","
   $('alert-distance-slider').addEventListener('input', (e) => {
     appSettings.alertKm = parseInt(e.target.value, 10);
     $('alert-distance-value').textContent = appSettings.alertKm + ' km';
-    $('nav-alert-km').textContent = '🔔 ' + appSettings.alertKm + ' km';
   });
   $('alert-distance-slider').addEventListener('change', () => { saveSettings(); applySettings(); });
 
@@ -2212,6 +2212,7 @@ const TOLLS_RAW = [{"r":"01A903905CD","n":"Beaupont","t":"Ech","l":"Echangeur","
   function callToll(station){
     calledTollNames.add(station.name);
     station.called = true;
+    lastConvoyPub = 0;   // renvoie tout de suite l'état « prévenu » au suivi
     window.location.href = 'tel:' + getTollPhone(station);
     renderTollList(lastDep, lastArr);
     drawTollMarkers();
@@ -2983,6 +2984,7 @@ const TOLLS_RAW = [{"r":"01A903905CD","n":"Beaupont","t":"Ech","l":"Echangeur","
     if (next){
       out.nextToll = next.name;
       out.nextTollKm = +Math.max(0, next.km - mm.along / 1000).toFixed(1);
+      out.nextTollCalled = !!next.called;
     }
     return out;
   }
