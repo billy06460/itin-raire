@@ -1,0 +1,119 @@
+name: Build Android APK
+
+# Se declenche automatiquement a chaque envoi sur la branche "main",
+# et peut aussi etre lance manuellement depuis l'onglet Actions de GitHub.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Recuperer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Installer le JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      # Le SDK Android est deja preinstalle sur les machines GitHub (ubuntu-latest),
+      # avec les licences deja acceptees : pas besoin d'etape supplementaire ici.
+
+      - name: Installer les dependances npm
+        run: npm install
+
+      - name: Ajouter la plateforme Android
+        run: npx cap add android
+
+      - name: Generer l'icone (si le dossier resources/ existe)
+        run: |
+          if [ -d "resources" ]; then
+            npx capacitor-assets generate --android --iconBackgroundColor '#14161a' --iconBackgroundColorDark '#14161a'
+          else
+            echo "Pas de dossier resources : icone par defaut de Capacitor conservee."
+          fi
+
+      - name: Ajouter les permissions (localisation, arriere-plan, service au premier plan)
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          for P in ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION ACCESS_BACKGROUND_LOCATION FOREGROUND_SERVICE FOREGROUND_SERVICE_LOCATION POST_NOTIFICATIONS WAKE_LOCK; do
+            grep -q "android.permission.$P\"" "$MANIFEST" || sed -i "s#</manifest>#    <uses-permission android:name=\"android.permission.$P\" />\n</manifest>#" "$MANIFEST"
+          done
+          for P in ACCESS_FINE_LOCATION ACCESS_BACKGROUND_LOCATION FOREGROUND_SERVICE_LOCATION; do
+            grep -q "android.permission.$P\"" "$MANIFEST" || { echo "Permission $P non ajoutee"; exit 1; }
+          done
+
+      - name: Verrouiller l'orientation en mode portrait
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          grep -q 'android:screenOrientation="portrait"' "$MANIFEST" || sed -i '/android:name=".MainActivity"/a\            android:screenOrientation="portrait"' "$MANIFEST"
+          grep -q 'android:screenOrientation="portrait"' "$MANIFEST" || { echo "Verrouillage orientation non ajoute"; exit 1; }
+
+      - name: Synchroniser le code web
+        run: npx cap sync android
+
+      - name: Autoriser l'execution de gradlew
+        run: chmod +x android/gradlew
+
+      # Signature avec une cle FIXE (signing/itineraire.keystore) : toutes les APK
+      # ont la meme signature, donc Android les installe PAR-DESSUS l'ancienne
+      # (mise a jour) sans desinstaller. Le numero de version monte a chaque build.
+      - name: Brancher la cle de signature fixe et le numero de version
+        run: |
+          test -f signing/itineraire.keystore || { echo "signing/itineraire.keystore manquant"; exit 1; }
+          cat >> android/app/build.gradle <<EOF
+
+          android {
+              defaultConfig {
+                  versionCode ${{ github.run_number }} + 1000
+                  versionName "1.0.${{ github.run_number }}"
+              }
+              signingConfigs {
+                  fixe {
+                      storeFile file("$GITHUB_WORKSPACE/signing/itineraire.keystore")
+                      storePassword "itineraire2026"
+                      keyAlias "itineraire"
+                      keyPassword "itineraire2026"
+                  }
+              }
+              buildTypes {
+                  debug { signingConfig signingConfigs.fixe }
+              }
+          }
+          EOF
+          tail -22 android/app/build.gradle
+
+      - name: Compiler l'APK
+        working-directory: android
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Afficher l'empreinte de signature (doit etre identique a chaque build)
+        run: |
+          AS=$(ls -d $ANDROID_HOME/build-tools/*/ | sort -V | tail -1)apksigner
+          $AS verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk | head -5
+
+      - name: Verifier le service GPS d'arriere-plan (information)
+        run: |
+          M=$(find android/app/build/intermediates -name AndroidManifest.xml -path "*debug*" 2>/dev/null | head -1)
+          echo "Manifeste fusionne : $M"
+          if [ -n "$M" ] && grep -q "BackgroundGeolocationService" "$M"; then
+            echo "OK : service GPS d'arriere-plan present dans l'APK."
+          else
+            echo "::warning::Service BackgroundGeolocationService introuvable dans le manifeste fusionne : le GPS en arriere-plan risque de ne pas fonctionner."
+          fi
+
+      - name: Mettre l'APK a disposition en telechargement
+        uses: actions/upload-artifact@v4
+        with:
+          name: itineraire-peages-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
